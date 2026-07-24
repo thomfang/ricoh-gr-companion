@@ -1,0 +1,114 @@
+# Ricoh GR Companion
+
+[简体中文](README.zh-CN.md)
+
+A native-style RICOH GR companion built for the [Scripting](https://scripting.app) app on iPhone. It combines a camera photo browser, selective downloads, Photos/Files export, and an MJPEG live viewfinder in one lightweight tool.
+
+> This is an independent, unofficial project and is not affiliated with or endorsed by Ricoh Imaging. RICOH and GR are trademarks of their respective owners.
+
+## Highlights
+
+- Discover and reconnect to supported RICOH GR cameras over Bluetooth.
+- Read only a small, explicitly allow-listed device profile; no speculative GATT writes.
+- Browse the camera photo library over the camera's direct Wi-Fi network.
+- Load memory-only thumbnails with bounded concurrency.
+- View file and exposure metadata when supplied by the camera.
+- Select one or more files and explicitly save them to Apple Photos or export them to Files.
+- Stream the camera's MJPEG Live View with a single cancellable connection.
+- Automatically stop Live View when leaving the viewfinder.
+- English and Simplified Chinese UI with system light/dark appearance support.
+
+## Supported Cameras
+
+The compatibility layer recognizes:
+
+- RICOH GR III
+- RICOH GR IIIx
+- RICOH GR IV
+
+### Validation status
+
+The complete Live View path has been verified on a **RICOH GR IIIx running firmware 1.21**. Manual camera Wi-Fi, `/v1/props`, `/v1/liveview`, incremental MJPEG parsing, rendering, and stream cancellation were validated on a real device.
+
+Photo listing, thumbnails, metadata, original downloads, and Photos/Files export are implemented but still require centralized real-device validation. GR III and GR IV also require model-specific device evidence. The project intentionally does not claim unverified compatibility.
+
+## Requirements
+
+- iPhone or iPad with the Scripting app.
+- A supported RICOH GR camera.
+- Bluetooth enabled for camera discovery/profile status.
+- The iPhone manually joined to the camera's Wi-Fi network for photo browsing, downloads, and Live View.
+
+The app does not read, display, or persist the camera Wi-Fi SSID or password, and it does not attempt to join the network automatically.
+
+## Installation
+
+1. Download or clone this repository.
+2. Place the project folder in Scripting's `scripts` directory.
+3. Open **Ricoh GR Companion** in Scripting.
+4. Turn on the camera and allow Bluetooth access when requested.
+5. For photo browsing or Live View, enable camera Wi-Fi and join it manually in iPhone Settings.
+
+## Usage
+
+### Camera Library
+
+1. Join the camera Wi-Fi network.
+2. Open **Camera Library** and refresh.
+3. Tap a thumbnail to inspect metadata.
+4. Tap the filename area to select files.
+5. Choose **Save to Photos** or **Export to Files**.
+
+Downloads are user-initiated, individually tracked, cancellable, and written through temporary files to avoid holding entire originals in memory. Temporary files are removed after each operation. Existing files in an export directory are never overwritten.
+
+### Live View
+
+1. Join the camera Wi-Fi network.
+2. Open **Live View**.
+3. Tap **Start Live View**.
+4. Tap Stop or leave the page to release the stream.
+
+Only one Live View connection is allowed at a time. Preview frames remain in memory and are never persisted.
+
+## Safety and Privacy
+
+- No speculative Bluetooth writes.
+- No camera Wi-Fi credentials are read or stored.
+- No camera files are deleted.
+- No `PUT /photos/.../transfer` call is made, so the app does not alter the camera's transfer status.
+- Camera-side operations implemented by this project are read-only HTTP GET requests.
+- Photos and Files are written only after an explicit user action.
+
+## Architecture
+
+- `index.tsx` — required Scripting entry point.
+- `src/App.tsx` — application coordinator and lifecycle ownership.
+- `src/camera-client.ts` — shared camera HTTP client.
+- `src/camera-library.ts` — photo list, thumbnail, and metadata adapters.
+- `src/photo-transfer.ts` — cancellable streamed download and export pipeline.
+- `src/live-view-controller.ts` — single-connection MJPEG lifecycle.
+- `src/mjpeg-parser.ts` — incremental JPEG SOI/EOI framing.
+- `src/ui/` — native SwiftUI-style TSX screens and components.
+- `src/i18n/` — English and Simplified Chinese resources.
+- `tests/offline-validation.ts` — protocol/model regression checks that do not require a camera.
+
+## Development
+
+Run static diagnostics from the Scripting editor. The offline regression script can be run with:
+
+```sh
+scripting-ts run tests/offline-validation.ts
+```
+
+Standalone Scripting files must call `Script.exit()` when finished so the runner terminates normally.
+
+## Current Limitations
+
+- Camera Wi-Fi must be enabled and joined manually.
+- Thumbnail size values and photo list variants can differ by camera/firmware and need further device feedback.
+- EXIF, capture date, orientation, DNG behavior, and video export fidelity require real-device verification.
+- Background transfer, resume, remote shutter, camera parameter writes, and camera-side deletion are intentionally out of scope.
+
+## Contributing
+
+Real-device reports are especially useful. Please include the camera model, firmware version, endpoint/status summary, and observed behavior, but never post a camera Wi-Fi password, serial number, or private photo.

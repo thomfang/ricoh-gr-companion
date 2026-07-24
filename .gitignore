@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+
+# Scripting / editor artifacts
+*.log
+attachments/
+
+# Local secrets
+.env
+.env.*

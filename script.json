@@ -1,0 +1,41 @@
+{
+  "entry" : "index.tsx",
+  "author" : {
+    "email" : "tilfon@live.com",
+    "name" : "thomfang",
+    "homepage" : "https:\/\/x.com\/thomfang"
+  },
+  "localizedNames" : {
+    "es" : "",
+    "pt" : "",
+    "zh" : "理光 GR 相机伴侣",
+    "ja" : "",
+    "ru" : "",
+    "it" : "",
+    "de" : "",
+    "fr" : "",
+    "en" : "Ricoh GR Companion"
+  },
+  "runInApp" : true,
+  "remoteResource" : null,
+  "permissions" : null,
+  "version" : "1.0.0",
+  "name" : "Ricoh GR Companion",
+  "localizedDescriptions" : {
+    "es" : "",
+    "pt" : "",
+    "zh" : "适用于 RICOH GR III、GR IIIx 和 GR IV 的照片浏览、选择下载、Photos/Files 导出与实时取景工具。",
+    "ja" : "",
+    "ru" : "",
+    "it" : "",
+    "de" : "",
+    "fr" : "",
+    "en" : "Photo browsing, selective downloads, Photos/Files export, and Live View for RICOH GR III, GR IIIx, and GR IV cameras."
+  },
+  "iconImage" : null,
+  "contributors" : [],
+  "color" : "rgba(230, 190, 1,1)",
+  "intentInputTypes" : [],
+  "icon" : "camera.fill",
+  "description" : "Photo browsing, selective downloads, Photos/Files export, and Live View for RICOH GR III, GR IIIx, and GR IV cameras."
+}
