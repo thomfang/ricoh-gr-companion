@@ -1,4 +1,5 @@
-import { formatError, formatReadValue } from "./formatters"
+import { AppError } from "./app-error"
+import { formatError } from "./formatters"
 import type { DiscoveredCamera } from "./models"
 
 const RICOH_SERVICE_UUIDS = new Set([
@@ -8,14 +9,50 @@ const RICOH_SERVICE_UUIDS = new Set([
   "0F291746-0C80-4726-87A7-3C501FD3B4B6",
 ].map(value => value.toUpperCase()))
 
-const SAFE_DEVICE_INFO: Record<string, string> = {
-  "2A24": "型号",
-  "2A26": "固件修订",
-  "2A28": "软件修订",
-  "2A29": "厂商",
-}
+const SAFE_DEVICE_INFO = {
+  "2A24": "model",
+  "2A26": "firmware",
+  "2A28": "software",
+  "2A29": "manufacturer",
+} as const
+const DEVICE_INFORMATION_SERVICE_UUID = "180A"
 const CAMERA_SERVICE_UUID = "4B445988-CAA0-4DD3-941D-37B4F52ACA86"
 const OPERATION_MODE_UUID = "1452335A-EC7F-4877-B8AB-0F72E18BB295"
+
+type SafeDeviceInfoUuid = keyof typeof SAFE_DEVICE_INFO
+export type SafeProfileField = typeof SAFE_DEVICE_INFO[SafeDeviceInfoUuid] | "operationMode"
+
+export type SafeProfileReadFailure = {
+  field: SafeProfileField
+  serviceUuid: string
+  characteristicUuid: string
+  error: string
+}
+
+export type SafeCameraProfile = {
+  model?: string
+  firmware?: string
+  software?: string
+  manufacturer?: string
+  operationMode?: number
+  readFailures: SafeProfileReadFailure[]
+}
+
+function normalizeGattUuid(uuid: string): string {
+  const upper = uuid.toUpperCase()
+  const bluetoothBaseMatch = upper.match(/^0000([0-9A-F]{4})-0000-1000-8000-00805F9B34FB$/)
+  return bluetoothBaseMatch?.[1] ?? upper
+}
+
+function decodeDeviceInfo(data: Data): string {
+  return (data.toDecodedString("utf8") ?? "").replace(/\u0000/g, "").trim()
+}
+
+function decodeOperationMode(data: Data): number {
+  const hex = data.toHexString().replace(/[^0-9A-F]/gi, "")
+  if (hex.length < 2) throw new Error("Operation mode value is empty")
+  return Number.parseInt(hex.slice(0, 2), 16)
+}
 
 export function isRicohCandidate(name: string, advertisedServices: string[]): boolean {
   const upperName = name.toUpperCase()
@@ -26,7 +63,7 @@ export function isRicohCandidate(name: string, advertisedServices: string[]): bo
 export function cameraFromAdvertisement(peripheral: BluetoothPeripheral, advertisementData: BluetoothAdvertisementData, rssi: number): DiscoveredCamera {
   return {
     id: peripheral.id,
-    name: advertisementData.localName ?? peripheral.name ?? "未命名蓝牙设备",
+    name: advertisementData.localName ?? peripheral.name ?? "RICOH GR",
     rssi,
     connectable: advertisementData.isConnectable ?? true,
     advertisedServices: advertisementData.serviceUUIDs ?? [],
@@ -39,7 +76,7 @@ export async function stopBleScan(): Promise<void> {
 
 export async function discoverServices(peripheral: BluetoothPeripheral): Promise<BluetoothService[]> {
   return new Promise<BluetoothService[]>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("服务发现超时（8 秒）")), 8000)
+    const timeout = setTimeout(() => reject(new AppError("service-discovery-timeout")), 8000)
     peripheral.onDiscoverServices = (error, discovered) => {
       clearTimeout(timeout)
       peripheral.onDiscoverServices = null
@@ -55,7 +92,7 @@ export async function discoverServices(peripheral: BluetoothPeripheral): Promise
 
 export async function discoverCharacteristics(peripheral: BluetoothPeripheral, service: BluetoothService): Promise<BluetoothCharacteristic[]> {
   return new Promise<BluetoothCharacteristic[]>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("特征发现超时（8 秒）")), 8000)
+    const timeout = setTimeout(() => reject(new AppError("characteristic-discovery-timeout")), 8000)
     peripheral.onDiscoverCharacteristics = (error, discovered) => {
       clearTimeout(timeout)
       peripheral.onDiscoverCharacteristics = null
@@ -69,40 +106,52 @@ export async function discoverCharacteristics(peripheral: BluetoothPeripheral, s
   })
 }
 
-export async function discoverGatt(peripheral: BluetoothPeripheral): Promise<string[]> {
-  const services = await discoverServices(peripheral)
-  const lines = [`服务发现完成：${services.length} 项`]
-  if (services.length === 0) return [...lines, "未发现服务：这可能是相机工作模式、配对状态或 Scripting BLE 封装限制。"]
-
-  for (const service of services) {
-    lines.push(`服务 ${service.uuid}${service.isPrimary ? "（主服务）" : ""}`)
-    try {
-      const characteristics = await discoverCharacteristics(peripheral, service)
-      lines.push(`  └ 特征发现完成：${characteristics.length} 项`)
-      if (characteristics.length === 0) lines.push("  └ 未发现特征")
-      for (const characteristic of characteristics) lines.push(`  └ ${characteristic.uuid}  [${characteristic.properties.join(", ") || "无属性"}]`)
-    } catch (error) {
-      lines.push(`  └ 特征发现失败：${formatError(error)}`)
-    }
-  }
-  return lines
+export type GattDiagnostic = {
+  services: Array<{ uuid: string; primary: boolean; characteristics: Array<{ uuid: string; properties: string[] }>; error?: string }>
 }
 
-export async function readSafeProfile(peripheral: BluetoothPeripheral): Promise<string[]> {
-  const lines = ["只读 Profile（不含序列号、Wi‑Fi 或其他未知特征）"]
+export async function discoverGatt(peripheral: BluetoothPeripheral): Promise<GattDiagnostic> {
+  const result: GattDiagnostic = { services: [] }
   for (const service of await discoverServices(peripheral)) {
-    const serviceUuid = service.uuid.toUpperCase()
-    if (serviceUuid !== "180A" && serviceUuid !== CAMERA_SERVICE_UUID) continue
+    const entry: GattDiagnostic["services"][number] = { uuid: service.uuid, primary: Boolean(service.isPrimary), characteristics: [] }
+    try {
+      entry.characteristics = (await discoverCharacteristics(peripheral, service)).map(characteristic => ({ uuid: characteristic.uuid, properties: characteristic.properties }))
+    } catch (error) {
+      entry.error = formatError(error)
+    }
+    result.services.push(entry)
+  }
+  return result
+}
+
+export async function readSafeProfile(peripheral: BluetoothPeripheral): Promise<SafeCameraProfile> {
+  const profile: SafeCameraProfile = { readFailures: [] }
+
+  for (const service of await discoverServices(peripheral)) {
+    const serviceUuid = normalizeGattUuid(service.uuid)
+    if (serviceUuid !== DEVICE_INFORMATION_SERVICE_UUID && serviceUuid !== CAMERA_SERVICE_UUID) continue
+
     for (const characteristic of await discoverCharacteristics(peripheral, service)) {
-      const uuid = characteristic.uuid.toUpperCase()
-      const label = serviceUuid === "180A" ? SAFE_DEVICE_INFO[uuid] : uuid === OPERATION_MODE_UUID ? "Operation Mode" : undefined
-      if (!label || !characteristic.properties.includes("read")) continue
+      const characteristicUuid = normalizeGattUuid(characteristic.uuid)
+      const field = serviceUuid === DEVICE_INFORMATION_SERVICE_UUID
+        ? SAFE_DEVICE_INFO[characteristicUuid as SafeDeviceInfoUuid]
+        : characteristicUuid === OPERATION_MODE_UUID ? "operationMode" : undefined
+      if (!field || !characteristic.properties.includes("read")) continue
+
       try {
-        lines.push(`${label}（${characteristic.uuid}）：${formatReadValue(await peripheral.readValue(characteristic))}`)
+        const data = await peripheral.readValue(characteristic)
+        if (field === "operationMode") profile.operationMode = decodeOperationMode(data)
+        else profile[field] = decodeDeviceInfo(data)
       } catch (error) {
-        lines.push(`${label}（${characteristic.uuid}）读取失败：${formatError(error)}`)
+        profile.readFailures.push({
+          field,
+          serviceUuid: service.uuid,
+          characteristicUuid: characteristic.uuid,
+          error: formatError(error),
+        })
       }
     }
   }
-  return lines.length === 1 ? [...lines, "未找到可读取的白名单特征。"] : lines
+
+  return profile
 }

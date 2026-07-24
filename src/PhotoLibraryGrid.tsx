@@ -1,4 +1,6 @@
 import { Button, HStack, Image, LazyVGrid, NavigationLink, Rectangle, ScrollView, Spacer, Text, VStack, ZStack } from "scripting"
+import { errorFromCode, localizedError } from "./app-error"
+import type { CameraApiProfile } from "./camera-profile"
 import { PhotoDetailScreen } from "./PhotoDetailScreen"
 import { clearPhotoSelection, formatByteCount, togglePhotoSelection, type CameraPhoto, type PhotoLibraryState, type ThumbnailState, type TransferDestination } from "./photo-library-model"
 import type { I18nData } from "./i18n/en"
@@ -11,6 +13,7 @@ const gridColumns = [
 ]
 
 type PhotoLibraryProps = {
+  profile?: CameraApiProfile
   state: PhotoLibraryState
   t: I18nData
   onSelectState: (state: PhotoLibraryState) => void
@@ -20,7 +23,7 @@ type PhotoLibraryProps = {
   onCancelTransfer: () => void
 }
 
-export function PhotoLibraryWorkspace({ state, t, onSelectState, onRefresh, onRetryThumbnail, onTransfer, onCancelTransfer }: PhotoLibraryProps) {
+export function PhotoLibraryWorkspace({ profile, state, t, onSelectState, onRefresh, onRetryThumbnail, onTransfer, onCancelTransfer }: PhotoLibraryProps) {
   const selectedCount = state.selectedIds.size
   return <ZStack alignment="top">
     <Rectangle fill={theme.canvas} ignoresSafeArea />
@@ -34,7 +37,7 @@ export function PhotoLibraryWorkspace({ state, t, onSelectState, onRefresh, onRe
           {state.phase === "failed" && <Text font="caption" foregroundStyle={theme.live}>{state.error ?? t.libraryError}</Text>}
           <LazyVGrid columns={gridColumns} spacing={3}>
             {state.photos.map(photo => <PhotoTile
-              key={photo.id}
+              profile={profile}
               photo={photo}
               thumbnail={state.thumbnails[photo.id]}
               selected={state.selectedIds.has(photo.id)}
@@ -79,25 +82,26 @@ function LoadingLibrary({ t }: { t: I18nData }) {
 }
 
 function FailedLibrary({ state, t, onRefresh }: { state: PhotoLibraryState; t: I18nData; onRefresh: () => void }) {
+  const displayError = state.error ? localizedError(errorFromCode(state.error) ?? state.error, t) : t.wifiHint
   return <VStack alignment="leading" spacing={12} padding={22} frame={{ maxWidth: "infinity", minHeight: 220, alignment: "leading" }} background={theme.canvasRaised}>
     <Image systemName="wifi.slash" imageScale="large" foregroundStyle={theme.live} />
     <Text font="headline" foregroundStyle={theme.paper}>{t.libraryError}</Text>
-    <Text font="subheadline" foregroundStyle={theme.paperMuted}>{state.error ?? t.wifiHint}</Text>
+    <Text font="subheadline" foregroundStyle={theme.paperMuted}>{displayError}</Text>
     <Button title={t.refreshLibrary} action={onRefresh} />
   </VStack>
 }
 
-function PhotoTile({ photo, thumbnail, selected, transferPhase, action, retry, tForTile }: { photo: CameraPhoto; thumbnail?: ThumbnailState; selected: boolean; transferPhase?: string; action: () => void; retry: () => void; tForTile: I18nData }) {
+function PhotoTile({ profile, photo, thumbnail, selected, transferPhase, action, retry, tForTile }: { profile?: CameraApiProfile; photo: CameraPhoto; thumbnail?: ThumbnailState; selected: boolean; transferPhase?: string; action: () => void; retry: () => void; tForTile: I18nData }) {
   const detail = [photo.extension || "FILE", formatByteCount(photo.byteSize)].filter(Boolean).join(" · ")
   return <VStack alignment="leading" spacing={6} padding={6} frame={{ maxWidth: "infinity", minHeight: 148, alignment: "leading" }} background={selected ? theme.selectedSurface : theme.canvasRaised}>
-    <NavigationLink destination={<PhotoDetailScreen photo={photo} thumbnail={thumbnail} t={tForTile} />}>
+    {profile ? <NavigationLink destination={<PhotoDetailScreen profile={profile} photo={photo} thumbnail={thumbnail} t={tForTile} />}>
       <ZStack frame={{ maxWidth: "infinity", minHeight: 94, maxHeight: 94 }} background={theme.opticalBlack}>
         {thumbnail?.phase === "ready" && <Image image={thumbnail.image} aspectRatio={{ contentMode: "fill" }} frame={{ maxWidth: "infinity", minHeight: 94, maxHeight: 94 }} clipped />}
         {(!thumbnail || thumbnail.phase === "idle" || thumbnail.phase === "loading") && <Image systemName={photo.mediaType === "raw" ? "doc.richtext" : "photo"} foregroundStyle={theme.paperMuted} />}
         {thumbnail?.phase === "failed" && <Button title="" action={retry} systemImage="arrow.clockwise" />}
         {selected && <VStack frame={{ maxWidth: "infinity", maxHeight: "infinity", alignment: "topTrailing" }} padding={7}><Image systemName="checkmark.circle.fill" symbolRenderingMode="palette" foregroundStyle={["white", theme.library]} /></VStack>}
       </ZStack>
-    </NavigationLink>
+    </NavigationLink> : <ZStack frame={{ maxWidth: "infinity", minHeight: 94, maxHeight: 94 }} background={theme.opticalBlack}><Image systemName="photo" foregroundStyle={theme.paperMuted} /></ZStack>}
     <Button title={photo.file} action={action} />
     <HStack><Text font="caption2" foregroundStyle={theme.charcoalMuted}>{detail}</Text><Spacer />{Boolean(transferPhase) && <Image systemName={transferSymbol(transferPhase!)} foregroundStyle={transferPhase === "succeeded" ? theme.capture : transferPhase === "failed" ? theme.live : theme.library} />}</HStack>
   </VStack>

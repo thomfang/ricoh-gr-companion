@@ -9,7 +9,7 @@ export default function GlassHomePreview() {
     <HomeScreen
       t={t}
       cameraIdentity="RICOH GR IIIx"
-      connectionStatus="已连接 · 可开始浏览或实时取景"
+      connectionStatus={t.cameraConnected("RICOH GR IIIx")}
       isConnecting={false}
       isCameraConnected={true}
       dataConnection="ready"
@@ -21,6 +21,9 @@ export default function GlassHomePreview() {
       cancelTransfer={() => undefined}
       libraryReport={[]}
       probePhotoLibrary={() => undefined}
+      cameraModelSelection="GR IIIx"
+      changeCameraModel={() => undefined}
+      detectedModel="GR IIIx"
       previewImage={null}
       isPreviewing={false}
       previewStatus={t.noFrame}

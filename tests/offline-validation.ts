@@ -1,5 +1,8 @@
 import { Script } from "scripting"
 import { cameraUrl, photoPath } from "../src/camera-client"
+import { GR3_CAMERA_API_PROFILE, GR4_CAMERA_API_PROFILE, resolveCameraApiProfile } from "../src/camera-profile"
+import { localizedError, AppError } from "../src/app-error"
+import { getI18n } from "../src/i18n"
 import { parseCameraPhotoList } from "../src/camera-library"
 import { identifyCameraModel } from "../src/models"
 import { appendMjpegChunk, extractJpegFrames } from "../src/mjpeg-parser"
@@ -9,8 +12,18 @@ function expect(condition: boolean, message: string) {
   if (!condition) throw new Error(message)
 }
 
-expect(cameraUrl("/v1/photos", { limit: 20, after: "A B" }).endsWith("limit=20&after=A%20B"), "query encoding")
-expect(photoPath("100 RICOH", "R#1.JPG") === "/v1/photos/100%20RICOH/R%231.JPG", "photo path encoding")
+expect(cameraUrl(GR3_CAMERA_API_PROFILE, "/v1/photos", { limit: 20, after: "A B" }).endsWith("limit=20&after=A%20B"), "query encoding")
+expect(photoPath(GR3_CAMERA_API_PROFILE, "100 RICOH", "R#1.JPG") === "/v1/photos/100%20RICOH/R%231.JPG", "photo path encoding")
+expect(resolveCameraApiProfile("GR III")?.id === "gr3", "GR III profile")
+expect(resolveCameraApiProfile("GR IIIx")?.id === "gr3", "GR IIIx profile")
+expect(resolveCameraApiProfile("GR IV")?.id === "gr4", "GR IV profile")
+expect(resolveCameraApiProfile("auto", "GR IV")?.id === "gr4", "auto detected GR IV profile")
+expect(resolveCameraApiProfile("auto", "unknown") === undefined, "auto unknown stays unresolved")
+expect(GR3_CAMERA_API_PROFILE.photoListCandidates[0].path === "/v1/photos/infos", "GR3 list route order")
+expect(GR4_CAMERA_API_PROFILE.photoListCandidates[0].path === "/v1/photos", "GR4 list route order")
+expect(GR3_CAMERA_API_PROFILE.liveViewPath === "/v1/liveview" && GR4_CAMERA_API_PROFILE.liveViewPath === "/v1/liveview", "shared LiveView route")
+expect(localizedError(new AppError("thumbnail-decode-failed"), getI18n("en")) === "The camera thumbnail could not be decoded.", "English error localization")
+expect(localizedError(new AppError("thumbnail-decode-failed"), getI18n("zh")) === "无法解码相机返回的缩略图。", "Chinese error localization")
 expect(identifyCameraModel("RICOH GR IIIx") === "GR IIIx", "GR IIIx detection")
 expect(identifyCameraModel("RICOH GR IV") === "GR IV", "GR IV detection")
 expect(identifyCameraModel("RICOH GR III") === "GR III", "GR III detection")

@@ -1,3 +1,5 @@
+import type { CameraApiProfile, CameraModelSelection } from "../camera-profile"
+import type { CameraModel } from "../models"
 import type { AppLocale } from "../i18n"
 import type { I18nData } from "../i18n/en"
 import type { PhotoLibraryState, TransferDestination } from "../photo-library-model"
@@ -27,9 +29,13 @@ export type HomeScreenProps = {
   stopPreview: () => void
   locale: AppLocale
   changeLocale: (locale: AppLocale) => void
+  cameraModelSelection: CameraModelSelection
+  changeCameraModel: (selection: CameraModelSelection) => void
+  detectedModel: CameraModel
+  cameraProfile?: CameraApiProfile
   reconnectCamera: () => void
 }
 
-export type SettingsScreenProps = Pick<HomeScreenProps, "t" | "cameraIdentity" | "connectionStatus" | "isConnecting" | "isCameraConnected" | "dataConnection" | "locale" | "changeLocale" | "reconnectCamera" | "libraryReport" | "probePhotoLibrary">
+export type SettingsScreenProps = Pick<HomeScreenProps, "t" | "cameraIdentity" | "connectionStatus" | "isConnecting" | "isCameraConnected" | "dataConnection" | "locale" | "changeLocale" | "cameraModelSelection" | "changeCameraModel" | "detectedModel" | "cameraProfile" | "reconnectCamera" | "libraryReport" | "probePhotoLibrary">
 
 export type ViewfinderScreenProps = Pick<HomeScreenProps, "t" | "previewImage" | "isPreviewing" | "previewStatus" | "previewFrames" | "startPreview" | "stopPreview">

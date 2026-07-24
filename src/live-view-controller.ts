@@ -1,5 +1,7 @@
 import { AbortController } from "scripting"
+import { AppError } from "./app-error"
 import { cameraGet, ensureSuccessfulResponse } from "./camera-client"
+import type { CameraApiProfile } from "./camera-profile"
 import { appendMjpegChunk, extractJpegFrames } from "./mjpeg-parser"
 
 const MAX_PENDING_BYTES = 8 * 1024 * 1024
@@ -9,7 +11,7 @@ const MIN_RENDER_INTERVAL_MS = 200
 type LiveViewCallbacks = {
   onState: (message: string) => void
   onFrame: (image: UIImage, framesDecoded: number) => void
-  onError: (message: string) => void
+  onError: (error: unknown) => void
   onStopped: (message: string) => void
 }
 
@@ -22,29 +24,29 @@ export class LiveViewController {
 
   get running(): boolean { return this.controller !== null }
 
-  start(callbacks: LiveViewCallbacks): Promise<void> {
+  start(profile: CameraApiProfile, callbacks: LiveViewCallbacks): Promise<void> {
     if (this.activeTask) return this.activeTask
-    const task = this.run(callbacks)
+    const task = this.run(profile, callbacks)
     this.activeTask = task
     void task.finally(() => { if (this.activeTask === task) this.activeTask = null })
     return task
   }
 
-  private async run(callbacks: LiveViewCallbacks): Promise<void> {
+  private async run(profile: CameraApiProfile, callbacks: LiveViewCallbacks): Promise<void> {
     const generation = ++this.generation
     const controller = new AbortController()
     this.controller = controller
-    callbacks.onState("正在连接 LiveView…")
+    callbacks.onState("connecting")
     try {
-      const response = await cameraGet("/v1/liveview", {}, { signal: controller.signal, timeout: 20, debugLabel: "ricoh-gr-liveview-preview" })
+      const response = await cameraGet(profile, profile.liveViewPath, {}, { signal: controller.signal, timeout: 20, debugLabel: "ricoh-gr-liveview-preview" })
       if (!this.isCurrent(generation)) return
       ensureSuccessfulResponse(response, "LiveView")
-      const contentType = response.headers.get("content-type") ?? "未提供"
-      if (!contentType.toLowerCase().includes("multipart/x-mixed-replace")) throw new Error(`不是 MJPEG 响应：${contentType}`)
+      const contentType = response.headers.get("content-type") ?? ""
+      if (!contentType.toLowerCase().includes("multipart/x-mixed-replace")) throw new AppError("liveview-invalid-content-type", { contentType })
 
       const reader = response.body.getReader()
       this.cancelReader = async () => { await reader.cancel("LiveView stopped") }
-      callbacks.onState("LiveView 已连接，正在接收最新帧…")
+      callbacks.onState("receiving")
       let remainder = new Uint8Array()
       let framesDecoded = 0
       let lastRenderAt = 0
@@ -69,9 +71,9 @@ export class LiveViewController {
           break
         }
       }
-      if (this.isCurrent(generation)) callbacks.onStopped("LiveView 流已结束。")
+      if (this.isCurrent(generation)) callbacks.onStopped("ended")
     } catch (error) {
-      if (this.isCurrent(generation)) callbacks.onError(error instanceof Error ? error.message : String(error))
+      if (this.isCurrent(generation)) callbacks.onError(error)
     } finally {
       if (this.generation === generation) {
         this.controller = null

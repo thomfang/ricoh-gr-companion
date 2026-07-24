@@ -1,5 +1,7 @@
 import { AbortController } from "scripting"
-import { cameraGet, contentLength, ensureSuccessfulResponse, photoPath } from "./camera-client"
+import { AppError } from "./app-error"
+import { cameraGet, contentLength, ensureSuccessfulResponse } from "./camera-client"
+import { type CameraApiProfile } from "./camera-profile"
 import type { CameraPhoto, TransferDestination, TransferItemState } from "./photo-library-model"
 
 const MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024
@@ -17,7 +19,7 @@ export class PhotoTransferController {
     this.controller?.abort()
   }
 
-  async transfer(photos: CameraPhoto[], destination: TransferDestination, onProgress: TransferProgress): Promise<void> {
+  async transfer(profile: CameraApiProfile, photos: CameraPhoto[], destination: TransferDestination, onProgress: TransferProgress): Promise<void> {
     if (this.running || photos.length === 0) return
     this.cancelled = false
     this.controller = new AbortController()
@@ -37,7 +39,7 @@ export class PhotoTransferController {
           onProgress({ photoId: photo.id, phase: "cancelled", receivedBytes: 0 })
           continue
         }
-        await this.transferOne(photo, destination, exportDirectory, onProgress)
+        await this.transferOne(profile, photo, destination, exportDirectory, onProgress)
       }
     } finally {
       if (hasSecurityScope) {
@@ -47,16 +49,16 @@ export class PhotoTransferController {
     }
   }
 
-  private async transferOne(photo: CameraPhoto, destination: TransferDestination, exportDirectory: string | null, onProgress: TransferProgress): Promise<void> {
+  private async transferOne(profile: CameraApiProfile, photo: CameraPhoto, destination: TransferDestination, exportDirectory: string | null, onProgress: TransferProgress): Promise<void> {
     const temporaryPath = `${FileManager.temporaryDirectory}/${Date.now()}-${safeFileName(photo.file)}`
     let receivedBytes = 0
     let totalBytes: number | undefined
     try {
       onProgress({ photoId: photo.id, phase: "downloading", receivedBytes: 0 })
-      const response = await cameraGet(photoPath(photo.folder, photo.file), { storage: photo.storage }, { signal: this.controller?.signal, timeout: 180, debugLabel: "ricoh-gr-photo-download" })
+      const response = await cameraGet(profile, profile.originalPath(photo), { storage: photo.storage }, { signal: this.controller?.signal, timeout: 180, debugLabel: "ricoh-gr-photo-download" })
       ensureSuccessfulResponse(response, `Download ${photo.file}`)
       totalBytes = contentLength(response)
-      if (totalBytes !== undefined && totalBytes > MAX_DOWNLOAD_BYTES) throw new Error("文件超过 128 MB 安全上限")
+      if (totalBytes !== undefined && totalBytes > MAX_DOWNLOAD_BYTES) throw new AppError("download-too-large")
 
       const reader = response.dataStream.getReader()
       try {
@@ -65,15 +67,15 @@ export class PhotoTransferController {
           if (chunk.done) break
           if (!chunk.value || chunk.value.size === 0) continue
           receivedBytes += chunk.value.size
-          if (receivedBytes > MAX_DOWNLOAD_BYTES) throw new Error("文件超过 128 MB 安全上限")
+          if (receivedBytes > MAX_DOWNLOAD_BYTES) throw new AppError("download-too-large")
           await FileManager.appendData(temporaryPath, chunk.value)
           onProgress({ photoId: photo.id, phase: "downloading", receivedBytes, totalBytes })
         }
       } finally {
         reader.releaseLock()
       }
-      if (totalBytes !== undefined && receivedBytes !== totalBytes) throw new Error(`下载不完整：${receivedBytes}/${totalBytes} bytes`)
-      if (receivedBytes === 0) throw new Error("相机返回了空文件")
+      if (totalBytes !== undefined && receivedBytes !== totalBytes) throw new AppError("download-incomplete", { received: receivedBytes, expected: totalBytes })
+      if (receivedBytes === 0) throw new AppError("download-empty")
       if (this.cancelled) throw abortError()
 
       onProgress({ photoId: photo.id, phase: "saving", receivedBytes, totalBytes })
@@ -81,9 +83,9 @@ export class PhotoTransferController {
         const saved = photo.mediaType === "video"
           ? await Photos.saveVideo(temporaryPath, { fileName: photo.file })
           : await Photos.savePhoto(temporaryPath, { fileName: photo.file })
-        if (!saved) throw new Error("未能保存到系统照片库")
+        if (!saved) throw new AppError("save-to-photos-failed")
       } else {
-        if (!exportDirectory) throw new Error("未选择导出目录")
+        if (!exportDirectory) throw new AppError("export-directory-missing")
         await FileManager.copyFile(temporaryPath, await availableDestinationPath(exportDirectory, photo.file))
       }
       onProgress({ photoId: photo.id, phase: "succeeded", receivedBytes, totalBytes })
@@ -116,4 +118,4 @@ function safeFileName(value: string): string {
   return value.replace(/[\\/:*?"<>|]/g, "_") || "RICOH_GR_PHOTO"
 }
 function abortError(): Error { const error = new Error("Transfer cancelled"); error.name = "AbortError"; return error }
-function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error) }
+function errorMessage(error: unknown): string { return error instanceof AppError ? error.code : error instanceof Error ? error.message : String(error) }

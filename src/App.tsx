@@ -1,9 +1,12 @@
 import { AbortController, useEffect, useState } from "scripting"
-import { fetchCameraPhotoList, fetchCameraThumbnail, probeCameraPhotoList } from "./camera-library"
-import { formatError, parseProfileIdentity, profileIdentity } from "./formatters"
+import { errorToken, localizedError, AppError } from "./app-error"
+import { resolveCameraApiProfile, type CameraModelSelection } from "./camera-profile"
+import { fetchCameraPhotoList, fetchCameraThumbnail, probeCameraPhotoList, type PhotoListDiagnostic } from "./camera-library"
+import { parseProfileIdentity } from "./formatters"
 import { getI18n, type AppLocale } from "./i18n"
+import type { I18nData } from "./i18n/en"
 import { LiveViewController } from "./live-view-controller"
-import type { DiscoveredCamera } from "./models"
+import type { CameraIdentity, CameraModel, DiscoveredCamera } from "./models"
 import { emptyTransferState, initialPhotoLibraryState, type PhotoLibraryState, type TransferDestination, type TransferItemState } from "./photo-library-model"
 import { PhotoTransferController } from "./photo-transfer"
 import { cameraFromAdvertisement, isRicohCandidate, readSafeProfile, stopBleScan } from "./ricoh-ble"
@@ -11,16 +14,20 @@ import { HomeScreen } from "./ui/HomeScreen"
 import type { DataConnectionState } from "./ui/types"
 
 const KNOWN_CAMERA_KEY = "ricoh-gr-known-peripheral"
+const CAMERA_MODEL_KEY = "ricoh-gr-camera-model"
 const LOCALE_KEY = "ricoh-gr-app-locale"
 
 type KnownCamera = { id: string; name: string; model?: string }
+type ConnectionStatus = { kind: "not-connected" | "connecting" | "scanning" | "connected" | "scan-failed" | "connection-failed"; detail?: unknown }
+type PreviewStatus = "idle" | "connecting" | "waiting" | "connected" | "stopped" | "ended" | { kind: "error"; detail: string }
 
 /** Application coordinator: owns BLE, HTTP, thumbnail, transfer and LiveView lifecycles. */
 export default function App() {
   const [locale, setLocale] = useState<AppLocale>(() => Storage.get<AppLocale>(LOCALE_KEY) ?? "system")
   const t = getI18n(locale)
-  const [connectionStatus, setConnectionStatus] = useState(t.notConnected)
-  const [cameraIdentity, setCameraIdentity] = useState(t.notConnected)
+  const [connection, setConnection] = useState<ConnectionStatus>({ kind: "not-connected" })
+  const [detectedIdentity, setDetectedIdentity] = useState<CameraIdentity | null>(null)
+  const [cameraModelSelection, setCameraModelSelection] = useState<CameraModelSelection>(() => Storage.get<CameraModelSelection>(CAMERA_MODEL_KEY) ?? "auto")
   const [isConnecting, setIsConnecting] = useState(false)
   const [isCameraConnected, setIsCameraConnected] = useState(false)
   const [dataConnection, setDataConnection] = useState<DataConnectionState>("unknown")
@@ -29,10 +36,38 @@ export default function App() {
   const [libraryRequest] = useState(() => ({ controller: null as AbortController | null, generation: 0 }))
   const [previewImage, setPreviewImage] = useState<UIImage | null>(null)
   const [isPreviewing, setIsPreviewing] = useState(false)
-  const [previewStatus, setPreviewStatus] = useState(t.noFrame)
+  const [previewStatus, setPreviewStatus] = useState<PreviewStatus>("idle")
   const [previewFrames, setPreviewFrames] = useState(0)
   const [photoLibrary, setPhotoLibrary] = useState<PhotoLibraryState>(initialPhotoLibraryState)
-  const [libraryReport, setLibraryReport] = useState<string[]>([])
+  const [libraryReport, setLibraryReport] = useState<PhotoListDiagnostic | null>(null)
+  const detectedModel: CameraModel = detectedIdentity?.model ?? "unknown"
+  const cameraProfile = resolveCameraApiProfile(cameraModelSelection, detectedModel)
+  const cameraIdentity = detectedIdentity ? t.profileIdentity(detectedIdentity.displayModel, detectedIdentity.firmware ?? "") : t.notConnected
+  const connectionStatus = localizeConnection(connection, t)
+  const previewStatusText = localizePreviewStatus(previewStatus, t)
+  const libraryReportLines = libraryReport ? localizePhotoDiagnostic(libraryReport, t) : []
+
+  function changeCameraModel(next: CameraModelSelection) {
+    if (next === cameraModelSelection) return
+    Storage.set(CAMERA_MODEL_KEY, next)
+    libraryRequest.controller?.abort()
+    libraryRequest.generation += 1
+    transferController.cancel()
+    void liveViewController.stop()
+    setCameraModelSelection(next)
+    setPhotoLibrary(initialPhotoLibraryState)
+    setLibraryReport(null)
+    setDataConnection("unknown")
+    setPreviewImage(null)
+    setPreviewFrames(0)
+    setIsPreviewing(false)
+    setPreviewStatus("idle")
+  }
+
+  function requireProfile() {
+    if (!cameraProfile) throw new AppError("profile-unresolved")
+    return cameraProfile
+  }
 
   function changeLocale(next: AppLocale) {
     Storage.set(LOCALE_KEY, next)
@@ -43,31 +78,30 @@ export default function App() {
 
   async function connectCamera(camera: DiscoveredCamera) {
     setIsConnecting(true)
-    setConnectionStatus(t.connecting)
+    setConnection({ kind: "connecting" })
     try {
       await stopScan()
       const peripheral = (await BluetoothCentralManager.retrievePeripherals([camera.id]))[0]
-      if (!peripheral) throw new Error("Peripheral unavailable")
+      if (!peripheral) throw new AppError("peripheral-unavailable")
       peripheral.onDisconnected = error => {
         setIsCameraConnected(false)
-        setConnectionStatus(error ? t.connectionFailed(formatError(error)) : t.notConnected)
+        setConnection(error ? { kind: "connection-failed", detail: error } : { kind: "not-connected" })
       }
       peripheral.onConnectFailed = error => {
         setIsCameraConnected(false)
-        setConnectionStatus(t.connectionFailed(formatError(error)))
+        setConnection({ kind: "connection-failed", detail: error })
       }
       await BluetoothCentralManager.connect(peripheral, { notifyOnDisconnection: true, enableAutoReconnect: false })
       const profile = await readSafeProfile(peripheral)
       const identity = parseProfileIdentity(profile)
       Storage.set(KNOWN_CAMERA_KEY, { id: camera.id, name: camera.name, model: identity.model })
-      const displayIdentity = profileIdentity(profile)
-      setCameraIdentity(displayIdentity)
+      setDetectedIdentity(identity)
       setIsCameraConnected(true)
-      setConnectionStatus(t.cameraConnected(displayIdentity))
+      setConnection({ kind: "connected" })
     } catch (error) {
-      setCameraIdentity(t.notConnected)
+      setDetectedIdentity(null)
       setIsCameraConnected(false)
-      setConnectionStatus(t.connectionFailed(formatError(error)))
+      setConnection({ kind: "connection-failed", detail: error })
     } finally {
       setIsConnecting(false)
     }
@@ -76,7 +110,7 @@ export default function App() {
   async function scanAndConnect() {
     if (isConnecting) return
     setIsConnecting(true)
-    setConnectionStatus(t.scanning)
+    setConnection({ kind: "scanning" })
     let selected = false
     let timeout: ReturnType<typeof setTimeout> | null = null
     try {
@@ -93,12 +127,12 @@ export default function App() {
         if (!selected) {
           void stopScan()
           setIsConnecting(false)
-          setConnectionStatus(t.scanFailed("No RICOH GR found"))
+          setConnection({ kind: "scan-failed", detail: new AppError("camera-not-found") })
         }
       }, 8000)
     } catch (error) {
       setIsConnecting(false)
-      setConnectionStatus(t.scanFailed(formatError(error)))
+      setConnection({ kind: "scan-failed", detail: error })
     }
   }
 
@@ -117,7 +151,7 @@ export default function App() {
     setDataConnection("checking")
     setPhotoLibrary(current => ({ ...current, phase: "loading", error: null }))
     try {
-      const photos = await fetchCameraPhotoList(controller.signal)
+      const photos = await fetchCameraPhotoList(requireProfile(), controller.signal)
       if (generation !== libraryRequest.generation) return
       setDataConnection("ready")
       setPhotoLibrary(current => {
@@ -129,7 +163,7 @@ export default function App() {
     } catch (error) {
       if (generation !== libraryRequest.generation) return
       setDataConnection("offline")
-      setPhotoLibrary(current => ({ ...current, phase: "failed", error: formatError(error) }))
+      setPhotoLibrary(current => ({ ...current, phase: "failed", error: errorToken(error) }))
     }
   }
 
@@ -149,12 +183,12 @@ export default function App() {
     if (!controller) return
     setPhotoLibrary(current => ({ ...current, thumbnails: { ...current.thumbnails, [photoId]: { phase: "loading" } } }))
     try {
-      const image = await fetchCameraThumbnail(photo, controller.signal)
+      const image = await fetchCameraThumbnail(requireProfile(), photo, controller.signal)
       if (generation !== libraryRequest.generation) return
       setPhotoLibrary(current => ({ ...current, thumbnails: { ...current.thumbnails, [photoId]: { phase: "ready", image } } }))
     } catch (error) {
       if (generation !== libraryRequest.generation) return
-      setPhotoLibrary(current => ({ ...current, thumbnails: { ...current.thumbnails, [photoId]: { phase: "failed", error: formatError(error) } } }))
+      setPhotoLibrary(current => ({ ...current, thumbnails: { ...current.thumbnails, [photoId]: { phase: "failed", error: errorToken(error) } } }))
     }
   }
 
@@ -164,13 +198,14 @@ export default function App() {
   }
 
   async function probePhotoLibrary() {
-    setLibraryReport([t.readingLibrary])
+    setLibraryReport(null)
+    setDataConnection("checking")
     try {
-      const report = await probeCameraPhotoList()
+      const report = await probeCameraPhotoList(requireProfile())
       setLibraryReport(report)
-      setDataConnection(report[0]?.includes("200") ? "ready" : "offline")
+      setDataConnection(report.status >= 200 && report.status < 300 ? "ready" : "offline")
     } catch (error) {
-      setLibraryReport([`${t.libraryError} ${formatError(error)}`])
+      setLibraryReport({ profileId: cameraProfile?.id ?? "unresolved", routeKind: "", status: 0, statusText: localizedError(error, t), parseError: localizedError(error, t) })
       setDataConnection("offline")
     }
   }
@@ -181,7 +216,7 @@ export default function App() {
     const items = Object.fromEntries(selected.map(photo => [photo.id, { photoId: photo.id, phase: "queued", receivedBytes: 0 } as TransferItemState]))
     setPhotoLibrary(current => ({ ...current, transfer: { destination, running: true, completed: 0, total: selected.length, items } }))
     try {
-      await transferController.transfer(selected, destination, item => {
+      await transferController.transfer(requireProfile(), selected, destination, item => {
         setPhotoLibrary(current => {
           const nextItems = { ...current.transfer.items, [item.photoId]: item }
           const completed = Object.values(nextItems).filter(value => ["succeeded", "failed", "cancelled"].includes(value.phase)).length
@@ -189,7 +224,7 @@ export default function App() {
         })
       })
     } catch (error) {
-      const message = formatError(error)
+      const message = localizedError(error, t)
       setPhotoLibrary(current => {
         const nextItems = Object.fromEntries(Object.entries(current.transfer.items).map(([id, item]) => [id, ["succeeded", "failed", "cancelled"].includes(item.phase) ? item : { ...item, phase: "failed" as const, error: message }]))
         return { ...current, transfer: { ...current.transfer, items: nextItems, completed: Object.keys(nextItems).length } }
@@ -205,16 +240,19 @@ export default function App() {
   function cancelTransfer() { transferController.cancel() }
 
   function startPreview() {
-    if (liveViewController.running) return
+    if (liveViewController.running || !cameraProfile) {
+      if (!cameraProfile) setPreviewStatus({ kind: "error", detail: t.profileUnresolved })
+      return
+    }
     setPreviewImage(null)
     setPreviewFrames(0)
     setIsPreviewing(true)
-    setPreviewStatus(t.connecting)
-    void liveViewController.start({
-      onState: () => setPreviewStatus(t.waitingForFrame),
-      onFrame: (image, framesDecoded) => { setPreviewImage(image); setPreviewFrames(framesDecoded); setPreviewStatus(t.previewConnected); setDataConnection("ready") },
-      onError: message => { setIsPreviewing(false); setPreviewStatus(t.previewError(message)); setDataConnection("offline") },
-      onStopped: () => { setIsPreviewing(false); setPreviewStatus(t.previewStopped) },
+    setPreviewStatus("connecting")
+    void liveViewController.start(cameraProfile, {
+      onState: state => setPreviewStatus(state === "receiving" ? "waiting" : "connecting"),
+      onFrame: (image, framesDecoded) => { setPreviewImage(image); setPreviewFrames(framesDecoded); setPreviewStatus("connected"); setDataConnection("ready") },
+      onError: error => { setIsPreviewing(false); setPreviewStatus({ kind: "error", detail: localizedError(error, t) }); setDataConnection("offline") },
+      onStopped: state => { setIsPreviewing(false); setPreviewStatus(state === "ended" ? "ended" : "stopped") },
     })
   }
 
@@ -222,7 +260,7 @@ export default function App() {
     await liveViewController.stop()
     setIsPreviewing(false)
     setPreviewImage(null)
-    setPreviewStatus(t.previewStopped)
+    setPreviewStatus("stopped")
   }
 
   useEffect(() => {
@@ -248,11 +286,15 @@ export default function App() {
     retryThumbnail={retryThumbnail}
     startTransfer={startTransfer}
     cancelTransfer={cancelTransfer}
-    libraryReport={libraryReport}
+    libraryReport={libraryReportLines}
     probePhotoLibrary={probePhotoLibrary}
+    cameraModelSelection={cameraModelSelection}
+    changeCameraModel={changeCameraModel}
+    detectedModel={detectedModel}
+    cameraProfile={cameraProfile}
     previewImage={previewImage}
     isPreviewing={isPreviewing}
-    previewStatus={previewStatus}
+    previewStatus={previewStatusText}
     previewFrames={previewFrames}
     startPreview={startPreview}
     stopPreview={stopPreview}
@@ -260,4 +302,44 @@ export default function App() {
     changeLocale={changeLocale}
     reconnectCamera={reconnectCamera}
   />
+}
+
+function localizeConnection(status: ConnectionStatus, t: I18nData): string {
+  switch (status.kind) {
+    case "not-connected": return t.notConnected
+    case "connecting": return t.connecting
+    case "scanning": return t.scanning
+    case "connected": return t.connectedShort
+    case "scan-failed": return t.scanFailed(status.detail ? localizedError(status.detail, t) : "")
+    case "connection-failed": return t.connectionFailed(status.detail ? localizedError(status.detail, t) : "")
+  }
+}
+
+function localizePreviewStatus(status: PreviewStatus, t: I18nData): string {
+  if (typeof status === "object") return t.previewError(status.detail)
+  switch (status) {
+    case "idle": return t.noFrame
+    case "connecting": return t.liveViewConnecting
+    case "waiting": return t.liveViewWaitingForFrame
+    case "connected": return t.liveViewConnected
+    case "stopped": return t.liveViewStopped
+    case "ended": return t.liveViewStreamEnded
+  }
+}
+
+function localizePhotoDiagnostic(report: PhotoListDiagnostic, t: I18nData): string[] {
+  const format = report.recognizedFormat === "files" ? "files" : report.recognizedFormat === "dirs" ? "dirs → name/files" : t.diagnosticUnrecognized
+  const lines = [
+    t.diagnosticProfileId(report.profileId),
+    t.diagnosticRouteKind(report.routeKind || t.diagnosticNone),
+    t.diagnosticHttpStatus(report.status, report.statusText),
+    t.diagnosticContentType(report.contentType ?? t.diagnosticNotProvided),
+    t.diagnosticContentLength(report.contentLength ?? t.diagnosticNotProvided),
+  ]
+  if (report.topLevelKeys) lines.push(t.diagnosticTopLevelKeys(report.topLevelKeys.join(", ") || t.diagnosticNone))
+  if (report.itemCount !== undefined) lines.push(t.diagnosticItemCount(report.itemCount))
+  if (report.recognizedFormat) lines.push(t.diagnosticRecognizedFormat(format))
+  if (report.parseError) lines.push(t.diagnosticParseFailed(report.parseError))
+  lines.push(t.diagnosticRedactedSummary)
+  return lines
 }

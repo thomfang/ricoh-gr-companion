@@ -1,10 +1,11 @@
 import { AbortController, HStack, Image, Rectangle, ScrollView, Spacer, Text, useEffect, useState, VStack, ZStack } from "scripting"
+import type { CameraApiProfile } from "./camera-profile"
 import { fetchCameraPhotoInfo } from "./camera-library"
 import type { I18nData } from "./i18n/en"
 import { formatByteCount, type CameraPhoto, type ThumbnailState } from "./photo-library-model"
 import { theme } from "./ui/theme"
 
-export function PhotoDetailScreen({ photo, thumbnail, t }: { photo: CameraPhoto; thumbnail?: ThumbnailState; t: I18nData }) {
+export function PhotoDetailScreen({ profile, photo, thumbnail, t }: { profile: CameraApiProfile; photo: CameraPhoto; thumbnail?: ThumbnailState; t: I18nData }) {
   const [info, setInfo] = useState<Record<string, unknown> | null>(null)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
@@ -12,13 +13,13 @@ export function PhotoDetailScreen({ photo, thumbnail, t }: { photo: CameraPhoto;
     let active = true
     setInfo(null)
     setError(null)
-    void fetchCameraPhotoInfo(photo, controller.signal).then(value => {
+    void fetchCameraPhotoInfo(profile, photo, controller.signal).then(value => {
       if (active) setInfo(value)
     }).catch(value => {
       if (active && !(value instanceof Error && value.name === "AbortError")) setError(value instanceof Error ? value.message : String(value))
     })
     return () => { active = false; controller.abort() }
-  }, [photo.id])
+  }, [photo.id, profile.id])
 
   const rows = detailRows(photo, info, t)
   return <ZStack alignment="top">

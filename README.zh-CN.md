@@ -16,7 +16,11 @@
 - 明确选择单张或多张照片后，保存到系统照片库或导出到 Files。
 - 通过单一、可取消的连接播放 MJPEG 实时取景。
 - 离开取景器页面时自动停止并释放视频流。
-- 支持英文和简体中文，并自动适配系统浅色/深色外观。
+- 支持英文和简体中文；状态、错误、BLE 身份和诊断会按当前语言动态渲染。
+
+- 可在“设置 → 相机型号”选择“自动识别”、GR III、GR IIIx 或 GR IV；选择会持久化，并决定照片列表、缩略图、详情、原图下载和实时取景使用的只读 API Profile。
+- “自动识别”只使用 BLE 白名单中的只读型号信息；无法识别时不会猜测机型，需要用户手动选择。
+- 切换机型会停止实时取景、取消照片请求与传输，并清空旧机型的照片和诊断状态，防止跨机型结果混用。
 
 ## 支持的相机
 
@@ -25,6 +29,13 @@
 - RICOH GR III
 - RICOH GR IIIx
 - RICOH GR IV
+
+### Profile 与验证状态
+
+- GR III 与 GR IIIx 使用 `gr3` Profile：照片列表优先 `GET /v1/photos/infos?storage=in&after=`，必要时回退 `GET /v1/photos?limit=100`。
+- GR IV 使用 `gr4` Profile：照片列表优先 `GET /v1/photos?limit=100`，必要时回退 `GET /v1/photos/infos?storage=in&after=`。
+- 两个 Profile 都使用 `GET /v1/props` 与 `GET /v1/liveview`；照片详情与原图路径由 Profile 统一生成。
+- GR IV 的 `/v1/props` 与 `/v1/liveview` 有外部 GR IV HDF 真机来源；GR IV 照片列表、缩略图、详情和下载候选路由仍需本项目真机验证。
 
 ### 验证状态
 
@@ -83,8 +94,8 @@
 
 - `index.tsx`：Scripting 必需的启动入口。
 - `src/App.tsx`：应用协调与生命周期管理。
-- `src/camera-client.ts`：统一相机 HTTP 客户端。
-- `src/camera-library.ts`：照片列表、缩略图和元数据适配。
+- `src/camera-profile.ts`：GR III/IIIx/IV 机型选择、协议代际与只读 API 路由。
+- `src/camera-client.ts`：要求显式 Profile 的统一只读相机 HTTP 客户端。
 - `src/photo-transfer.ts`：可取消的流式下载与导出流程。
 - `src/live-view-controller.ts`：单连接 MJPEG 生命周期。
 - `src/mjpeg-parser.ts`：基于 JPEG SOI/EOI 的增量分帧。
