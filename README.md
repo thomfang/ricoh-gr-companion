@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md)
 
-A native-style RICOH GR companion built for the [Scripting](https://scripting.app) app on iPhone. It combines a camera photo browser, selective downloads, Photos/Files export, and an MJPEG live viewfinder in one lightweight tool.
+A native-style RICOH GR companion built for the [Scripting](https://apps.apple.com/us/app/scripting/id6479691128) app on iPhone. It combines a camera photo browser, selective downloads, Photos/Files export, and an MJPEG live viewfinder in one lightweight tool.
 
 > This is an independent, unofficial project and is not affiliated with or endorsed by Ricoh Imaging. RICOH and GR are trademarks of their respective owners.
 

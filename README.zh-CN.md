@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-一款运行在 iPhone [Scripting](https://scripting.app) 中、采用原生界面风格的 RICOH GR 相机伴侣。它将相机照片浏览、选择性下载、保存到 Photos/Files 和 MJPEG 实时取景整合在一个轻量工具中。
+一款运行在 iPhone [Scripting](https://apps.apple.com/us/app/scripting/id6479691128) 中、采用原生界面风格的 RICOH GR 相机伴侣。它将相机照片浏览、选择性下载、保存到 Photos/Files 和 MJPEG 实时取景整合在一个轻量工具中。
 
 > 本项目是独立的非官方项目，与理光映像无隶属或官方认可关系。RICOH、GR 及相关商标归各自权利人所有。
 
