@@ -18,6 +18,7 @@ export async function fetchCameraPhotoListResult(signal?: AbortSignal): Promise<
   try {
     return await requestPhotoList("/v1/photos", { limit: 100 }, signal)
   } catch (primaryError) {
+    if (signal?.aborted || isAbortError(primaryError)) throw primaryError
     try {
       return await requestPhotoList("/v1/photos/infos", { storage: "in", after: "" }, signal)
     } catch {
@@ -34,7 +35,7 @@ async function requestPhotoList(path: string, query: Record<string, string | num
   const body = await response.text()
   if (body.length > MAX_LIST_BODY_BYTES) throw new Error("相机照片列表响应超过安全上限")
   const value = JSON.parse(body) as unknown
-  return { photos: parsePhotoList(value), topLevelKeys: objectKeys(value) }
+  return { photos: parseCameraPhotoList(value), topLevelKeys: objectKeys(value) }
 }
 
 export async function fetchCameraThumbnail(photo: CameraPhoto, signal?: AbortSignal): Promise<UIImage> {
@@ -68,11 +69,11 @@ export async function probeCameraPhotoList(): Promise<string[]> {
   return [...lines, ...summarizePhotoList(await response.text()), "只显示脱敏结构摘要；未显示照片路径或 WLAN 凭据。"]
 }
 
-function parsePhotoList(value: unknown): CameraPhoto[] {
+export function parseCameraPhotoList(value: unknown): CameraPhoto[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("相机照片列表不是 JSON 对象")
   const record = value as Record<string, unknown>
 
-  if (Array.isArray(record.files) && record.files.some(item => item && typeof item === "object")) {
+  if (Array.isArray(record.files)) {
     return record.files.flatMap(item => parseInfoPhoto(item))
   }
 
@@ -115,17 +116,20 @@ function parsePhotoDirectories(value: unknown): CameraPhotoDirectory[] {
 function summarizePhotoList(body: string): string[] {
   try {
     const value = JSON.parse(body) as unknown
-    const photos = parsePhotoList(value)
+    const photos = parseCameraPhotoList(value)
+    const record = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
+    const format = Array.isArray(record.files) ? "files 详情数组" : Array.isArray(record.dirs) ? "dirs → name/files" : "未识别"
     return [
       `JSON 顶层字段：${objectKeys(value).join(", ") || "无"}`,
       `列表条目数：${photos.length}`,
-      `已识别格式：${photos.some(photo => photo.byteSize !== undefined) ? "files 详情数组" : "dirs → name/files"}`,
+      `已识别格式：${format}`,
     ]
   } catch (error) {
     return [`照片列表解析失败：${error instanceof Error ? error.message : String(error)}`]
   }
 }
 
+function isAbortError(error: unknown): boolean { return error instanceof Error && error.name === "AbortError" }
 function objectKeys(value: unknown): string[] {
   return value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value as Record<string, unknown>) : []
 }

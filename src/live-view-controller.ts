@@ -88,11 +88,8 @@ export class LiveViewController {
     this.controller = null
     const cancel = this.cancelReader
     this.cancelReader = null
-    if (cancel) await cancel().catch(() => undefined)
-    if (task) {
-      await Promise.race([task.catch(() => undefined), delay(500)])
-      if (this.activeTask === task) this.activeTask = null
-    }
+    if (cancel) await Promise.race([cancel().catch(() => undefined), delay(500)])
+    if (task) await Promise.race([task.catch(() => undefined), delay(500)])
   }
 
   private isCurrent(generation: number): boolean { return this.controller !== null && this.generation === generation }

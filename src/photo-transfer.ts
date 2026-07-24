@@ -22,10 +22,15 @@ export class PhotoTransferController {
     this.cancelled = false
     this.controller = new AbortController()
     let exportDirectory: string | null = null
+    let hasSecurityScope = false
     try {
       if (destination === "files") {
         exportDirectory = await DocumentPicker.pickDirectory()
-        if (!exportDirectory) return
+        if (!exportDirectory) {
+          for (const photo of photos) onProgress({ photoId: photo.id, phase: "cancelled", receivedBytes: 0 })
+          return
+        }
+        hasSecurityScope = true
       }
       for (const photo of photos) {
         if (this.cancelled) {
@@ -35,7 +40,9 @@ export class PhotoTransferController {
         await this.transferOne(photo, destination, exportDirectory, onProgress)
       }
     } finally {
-      if (destination === "files") DocumentPicker.stopAcessingSecurityScopedResources()
+      if (hasSecurityScope) {
+        try { DocumentPicker.stopAcessingSecurityScopedResources() } catch {}
+      }
       this.controller = null
     }
   }
@@ -43,11 +50,12 @@ export class PhotoTransferController {
   private async transferOne(photo: CameraPhoto, destination: TransferDestination, exportDirectory: string | null, onProgress: TransferProgress): Promise<void> {
     const temporaryPath = `${FileManager.temporaryDirectory}/${Date.now()}-${safeFileName(photo.file)}`
     let receivedBytes = 0
+    let totalBytes: number | undefined
     try {
       onProgress({ photoId: photo.id, phase: "downloading", receivedBytes: 0 })
       const response = await cameraGet(photoPath(photo.folder, photo.file), { storage: photo.storage }, { signal: this.controller?.signal, timeout: 180, debugLabel: "ricoh-gr-photo-download" })
       ensureSuccessfulResponse(response, `Download ${photo.file}`)
-      const totalBytes = contentLength(response)
+      totalBytes = contentLength(response)
       if (totalBytes !== undefined && totalBytes > MAX_DOWNLOAD_BYTES) throw new Error("文件超过 128 MB 安全上限")
 
       const reader = response.dataStream.getReader()
@@ -66,6 +74,7 @@ export class PhotoTransferController {
       }
       if (totalBytes !== undefined && receivedBytes !== totalBytes) throw new Error(`下载不完整：${receivedBytes}/${totalBytes} bytes`)
       if (receivedBytes === 0) throw new Error("相机返回了空文件")
+      if (this.cancelled) throw abortError()
 
       onProgress({ photoId: photo.id, phase: "saving", receivedBytes, totalBytes })
       if (destination === "photos") {
@@ -80,9 +89,11 @@ export class PhotoTransferController {
       onProgress({ photoId: photo.id, phase: "succeeded", receivedBytes, totalBytes })
     } catch (error) {
       const cancelled = this.cancelled || (error instanceof Error && error.name === "AbortError")
-      onProgress({ photoId: photo.id, phase: cancelled ? "cancelled" : "failed", receivedBytes, error: cancelled ? undefined : errorMessage(error) })
+      onProgress({ photoId: photo.id, phase: cancelled ? "cancelled" : "failed", receivedBytes, totalBytes, error: cancelled ? undefined : errorMessage(error) })
     } finally {
-      if (await FileManager.exists(temporaryPath)) await FileManager.remove(temporaryPath).catch(() => undefined)
+      try {
+        if (await FileManager.exists(temporaryPath)) await FileManager.remove(temporaryPath)
+      } catch {}
     }
   }
 }
@@ -104,4 +115,5 @@ async function availableDestinationPath(directory: string, file: string): Promis
 function safeFileName(value: string): string {
   return value.replace(/[\\/:*?"<>|]/g, "_") || "RICOH_GR_PHOTO"
 }
+function abortError(): Error { const error = new Error("Transfer cancelled"); error.name = "AbortError"; return error }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error) }

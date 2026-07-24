@@ -180,17 +180,26 @@ export default function App() {
     if (selected.length === 0 || photoLibrary.transfer.running) return
     const items = Object.fromEntries(selected.map(photo => [photo.id, { photoId: photo.id, phase: "queued", receivedBytes: 0 } as TransferItemState]))
     setPhotoLibrary(current => ({ ...current, transfer: { destination, running: true, completed: 0, total: selected.length, items } }))
-    await transferController.transfer(selected, destination, item => {
-      setPhotoLibrary(current => {
-        const nextItems = { ...current.transfer.items, [item.photoId]: item }
-        const completed = Object.values(nextItems).filter(value => ["succeeded", "failed", "cancelled"].includes(value.phase)).length
-        return { ...current, transfer: { ...current.transfer, items: nextItems, completed } }
+    try {
+      await transferController.transfer(selected, destination, item => {
+        setPhotoLibrary(current => {
+          const nextItems = { ...current.transfer.items, [item.photoId]: item }
+          const completed = Object.values(nextItems).filter(value => ["succeeded", "failed", "cancelled"].includes(value.phase)).length
+          return { ...current, transfer: { ...current.transfer, items: nextItems, completed } }
+        })
       })
-    })
-    setPhotoLibrary(current => {
-      const succeeded = new Set(Object.values(current.transfer.items).filter(item => item.phase === "succeeded").map(item => item.photoId))
-      return { ...current, selectedIds: new Set([...current.selectedIds].filter(id => !succeeded.has(id))), transfer: { ...current.transfer, running: false } }
-    })
+    } catch (error) {
+      const message = formatError(error)
+      setPhotoLibrary(current => {
+        const nextItems = Object.fromEntries(Object.entries(current.transfer.items).map(([id, item]) => [id, ["succeeded", "failed", "cancelled"].includes(item.phase) ? item : { ...item, phase: "failed" as const, error: message }]))
+        return { ...current, transfer: { ...current.transfer, items: nextItems, completed: Object.keys(nextItems).length } }
+      })
+    } finally {
+      setPhotoLibrary(current => {
+        const succeeded = new Set(Object.values(current.transfer.items).filter(item => item.phase === "succeeded").map(item => item.photoId))
+        return { ...current, selectedIds: new Set([...current.selectedIds].filter(id => !succeeded.has(id))), transfer: { ...current.transfer, running: false } }
+      })
+    }
   }
 
   function cancelTransfer() { transferController.cancel() }

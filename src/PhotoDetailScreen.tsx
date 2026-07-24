@@ -9,8 +9,15 @@ export function PhotoDetailScreen({ photo, thumbnail, t }: { photo: CameraPhoto;
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     const controller = new AbortController()
-    void fetchCameraPhotoInfo(photo, controller.signal).then(setInfo).catch(value => setError(value instanceof Error ? value.message : String(value)))
-    return () => controller.abort()
+    let active = true
+    setInfo(null)
+    setError(null)
+    void fetchCameraPhotoInfo(photo, controller.signal).then(value => {
+      if (active) setInfo(value)
+    }).catch(value => {
+      if (active && !(value instanceof Error && value.name === "AbortError")) setError(value instanceof Error ? value.message : String(value))
+    })
+    return () => { active = false; controller.abort() }
   }, [photo.id])
 
   const rows = detailRows(photo, info, t)
