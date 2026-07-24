@@ -1,4 +1,4 @@
-import { Button, HStack, Image, Navigation, NavigationLink, NavigationStack, Rectangle, ScrollView, Text, VStack, ZStack } from "scripting"
+import { Button, HStack, Image, Label, Navigation, NavigationLink, NavigationStack, Rectangle, ScrollView, Text, VStack, ZStack } from "scripting"
 import { PhotoLibraryWorkspace } from "../PhotoLibraryGrid"
 import { SettingsScreen } from "./SettingsScreen"
 import { CameraHomeHeader, CaptureEntry, HomeIntroduction, LibraryHero } from "./HomeComponents"
@@ -12,7 +12,7 @@ export function HomeScreen(props: HomeScreenProps) {
   return <NavigationStack>
     <ZStack alignment="top">
       <Rectangle fill={theme.canvas} ignoresSafeArea />
-      <ScrollView navigationTitle={t.appTitle} navigationBarTitleDisplayMode="inline" toolbar={{ cancellationAction: <Button title={t.close} action={dismiss} systemImage="xmark" />, topBarTrailing: <NavigationLink destination={<SettingsScreen t={t} locale={props.locale} changeLocale={props.changeLocale} cameraModelSelection={props.cameraModelSelection} changeCameraModel={props.changeCameraModel} detectedModel={props.detectedModel} cameraProfile={props.cameraProfile} cameraIdentity={props.cameraIdentity} connectionStatus={props.connectionStatus} reconnectCamera={props.reconnectCamera} isConnecting={props.isConnecting} isCameraConnected={props.isCameraConnected} dataConnection={props.dataConnection} libraryReport={props.libraryReport} probePhotoLibrary={props.probePhotoLibrary} />}><HStack spacing={5}><Image systemName="gearshape" /><Text>{t.settings}</Text></HStack></NavigationLink> }} background="clear">
+      <ScrollView navigationTitle={t.appTitle} navigationBarTitleDisplayMode="inline" toolbar={{ cancellationAction: <Button title={t.close} action={dismiss} systemImage="xmark" />, topBarTrailing: <NavigationLink destination={<SettingsScreen t={t} locale={props.locale} changeLocale={props.changeLocale} cameraModelSelection={props.cameraModelSelection} changeCameraModel={props.changeCameraModel} detectedModel={props.detectedModel} cameraProfile={props.cameraProfile} cameraIdentity={props.cameraIdentity} connectionStatus={props.connectionStatus} reconnectCamera={props.reconnectCamera} isConnecting={props.isConnecting} isCameraConnected={props.isCameraConnected} dataConnection={props.dataConnection} libraryReport={props.libraryReport} probePhotoLibrary={props.probePhotoLibrary} />}><Label title={t.settings} systemImage="gearshape" /></NavigationLink> }} background="clear">
         <VStack alignment="leading" spacing={22} padding={{ top: 12, leading: 20, bottom: 28, trailing: 20 }} frame={{ maxWidth: "infinity", alignment: "leading" }}>
           <CameraHomeHeader t={t} cameraIdentity={props.cameraIdentity} isConnecting={props.isConnecting} isCameraConnected={props.isCameraConnected} />
           <HomeIntroduction t={t} />
