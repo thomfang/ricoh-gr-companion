@@ -34,10 +34,9 @@ export default function App() {
   const [liveViewController] = useState(() => new LiveViewController())
   const [transferController] = useState(() => new PhotoTransferController())
   const [libraryRequest] = useState(() => ({ controller: null as AbortController | null, generation: 0 }))
-  const [previewImage, setPreviewImage] = useState<UIImage | null>(null)
+  const [previewFrame, setPreviewFrame] = useState<{ image: UIImage | null; count: number }>({ image: null, count: 0 })
   const [isPreviewing, setIsPreviewing] = useState(false)
   const [previewStatus, setPreviewStatus] = useState<PreviewStatus>("idle")
-  const [previewFrames, setPreviewFrames] = useState(0)
   const [photoLibrary, setPhotoLibrary] = useState<PhotoLibraryState>(initialPhotoLibraryState)
   const [libraryReport, setLibraryReport] = useState<PhotoListDiagnostic | null>(null)
   const detectedModel: CameraModel = detectedIdentity?.model ?? "unknown"
@@ -58,8 +57,7 @@ export default function App() {
     setPhotoLibrary(initialPhotoLibraryState)
     setLibraryReport(null)
     setDataConnection("unknown")
-    setPreviewImage(null)
-    setPreviewFrames(0)
+    setPreviewFrame({ image: null, count: 0 })
     setIsPreviewing(false)
     setPreviewStatus("idle")
   }
@@ -244,13 +242,18 @@ export default function App() {
       if (!cameraProfile) setPreviewStatus({ kind: "error", detail: t.profileUnresolved })
       return
     }
-    setPreviewImage(null)
-    setPreviewFrames(0)
+    setPreviewFrame({ image: null, count: 0 })
     setIsPreviewing(true)
     setPreviewStatus("connecting")
     void liveViewController.start(cameraProfile, {
       onState: state => setPreviewStatus(state === "receiving" ? "waiting" : "connecting"),
-      onFrame: (image, framesDecoded) => { setPreviewImage(image); setPreviewFrames(framesDecoded); setPreviewStatus("connected"); setDataConnection("ready") },
+      onFrame: (image, framesDecoded) => {
+        setPreviewFrame({ image, count: framesDecoded })
+        if (framesDecoded === 1) {
+          setPreviewStatus("connected")
+          setDataConnection("ready")
+        }
+      },
       onError: error => { setIsPreviewing(false); setPreviewStatus({ kind: "error", detail: localizedError(error, t) }); setDataConnection("offline") },
       onStopped: state => { setIsPreviewing(false); setPreviewStatus(state === "ended" ? "ended" : "stopped") },
     })
@@ -259,7 +262,7 @@ export default function App() {
   async function stopPreview() {
     await liveViewController.stop()
     setIsPreviewing(false)
-    setPreviewImage(null)
+    setPreviewFrame({ image: null, count: 0 })
     setPreviewStatus("stopped")
   }
 
@@ -292,10 +295,10 @@ export default function App() {
     changeCameraModel={changeCameraModel}
     detectedModel={detectedModel}
     cameraProfile={cameraProfile}
-    previewImage={previewImage}
+    previewImage={previewFrame.image}
     isPreviewing={isPreviewing}
     previewStatus={previewStatusText}
-    previewFrames={previewFrames}
+    previewFrames={previewFrame.count}
     startPreview={startPreview}
     stopPreview={stopPreview}
     locale={locale}

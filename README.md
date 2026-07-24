@@ -14,7 +14,7 @@ A native-style RICOH GR companion built for the [Scripting](https://scripting.ap
 - Load memory-only thumbnails with bounded concurrency.
 - View file and exposure metadata when supplied by the camera.
 - Select one or more files and explicitly save them to Apple Photos or export them to Files.
-- Stream the camera's MJPEG Live View with a single cancellable connection.
+- Stream the camera's MJPEG Live View through Scripting's native zero-copy `Data` stream, rendering only the newest complete frame at up to 30 FPS with a single cancellable connection.
 - Automatically stop Live View when leaving the viewfinder.
 - English and Simplified Chinese UI; states, errors, BLE identity, and diagnostics are rendered in the current language.
 
@@ -79,7 +79,7 @@ Downloads are user-initiated, individually tracked, cancellable, and written thr
 3. Tap **Start Live View**.
 4. Tap Stop or leave the page to release the stream.
 
-Only one Live View connection is allowed at a time. Preview frames remain in memory and are never persisted.
+Only one Live View connection is allowed at a time. The native `Response.dataStream` path keeps network chunks and JPEG frames as `Data`, decodes only the newest complete frame, and caps UI delivery at 30 FPS. Actual frame rate still depends on the camera stream, Wi-Fi, JPEG decoding, and device rendering. Preview frames remain in memory and are never persisted.
 
 ## Safety and Privacy
 

@@ -5,7 +5,7 @@ import { localizedError, AppError } from "../src/app-error"
 import { getI18n } from "../src/i18n"
 import { parseCameraPhotoList } from "../src/camera-library"
 import { identifyCameraModel } from "../src/models"
-import { appendMjpegChunk, extractJpegFrames } from "../src/mjpeg-parser"
+import { appendMjpegChunk, appendMjpegData, extractJpegFrames, extractLatestJpegData } from "../src/mjpeg-parser"
 import { clearPhotoSelection, photoFromPath, togglePhotoSelection, initialPhotoLibraryState, type PhotoLibraryState } from "../src/photo-library-model"
 
 function expect(condition: boolean, message: string) {
@@ -59,5 +59,19 @@ const multiple = extractJpegFrames(new Uint8Array([...jpeg, 0, ...jpeg]))
 expect(multiple.frames.length === 2 && multiple.remainder.byteLength === 0, "MJPEG multiple frames")
 const incomplete = extractJpegFrames(new Uint8Array([1, 0xff, 0xd8, 2, 3]))
 expect(incomplete.frames.length === 0 && incomplete.remainder.byteLength === 4, "MJPEG incomplete frame remainder")
+
+const dataPartA = Data.fromUint8Array(new Uint8Array([9, 0xff, 0xd8, 1]))
+const dataPartB = Data.fromUint8Array(new Uint8Array([2, 0xff, 0xd9, 0, ...jpeg]))
+expect(Boolean(dataPartA && dataPartB), "Data test fixtures")
+if (dataPartA && dataPartB) {
+  const firstDataParse = extractLatestJpegData(appendMjpegData(null, dataPartA, 1024), 128)
+  expect(firstDataParse.latestFrame === null && firstDataParse.remainder?.size === 3, "Data MJPEG incomplete remainder")
+  const secondDataParse = extractLatestJpegData(appendMjpegData(firstDataParse.remainder, dataPartB, 1024), 128)
+  const latestBytes = secondDataParse.latestFrame?.toUint8Array()
+  expect(latestBytes?.byteLength === jpeg.byteLength, "Data MJPEG keeps latest complete frame")
+  expect(secondDataParse.remainder === null, "Data MJPEG clears complete tail")
+  const bounded = appendMjpegData(Data.fromUint8Array(new Uint8Array(12).fill(1)), Data.fromUint8Array(new Uint8Array(12).fill(2))!, 16)
+  expect(bounded.size === 16, "Data MJPEG pending bound")
+}
 console.log("Offline validation passed")
 Script.exit()

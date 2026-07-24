@@ -2,11 +2,12 @@ import { AbortController } from "scripting"
 import { AppError } from "./app-error"
 import { cameraGet, ensureSuccessfulResponse } from "./camera-client"
 import type { CameraApiProfile } from "./camera-profile"
-import { appendMjpegChunk, extractJpegFrames } from "./mjpeg-parser"
+import { appendMjpegData, extractLatestJpegData } from "./mjpeg-parser"
 
 const MAX_PENDING_BYTES = 8 * 1024 * 1024
 const MAX_FRAME_BYTES = 4 * 1024 * 1024
-const MIN_RENDER_INTERVAL_MS = 200
+export const LIVE_VIEW_TARGET_FPS = 30
+const MIN_RENDER_INTERVAL_MS = Math.floor(1000 / LIVE_VIEW_TARGET_FPS)
 
 type LiveViewCallbacks = {
   onState: (message: string) => void
@@ -44,32 +45,32 @@ export class LiveViewController {
       const contentType = response.headers.get("content-type") ?? ""
       if (!contentType.toLowerCase().includes("multipart/x-mixed-replace")) throw new AppError("liveview-invalid-content-type", { contentType })
 
-      const reader = response.body.getReader()
+      const reader = response.dataStream.getReader()
       this.cancelReader = async () => { await reader.cancel("LiveView stopped") }
       callbacks.onState("receiving")
-      let remainder = new Uint8Array()
+      let remainder: Data | null = null
       let framesDecoded = 0
       let lastRenderAt = 0
-      while (this.isCurrent(generation)) {
-        const read = await reader.read()
-        if (read.done) break
-        const chunk = read.value
-        if (!chunk || chunk.byteLength === 0) continue
-        const parsed = extractJpegFrames(appendMjpegChunk(remainder, chunk))
-        remainder = parsed.remainder.byteLength > MAX_PENDING_BYTES ? new Uint8Array() : parsed.remainder
-        for (let index = parsed.frames.length - 1; index >= 0; index -= 1) {
-          const jpegBytes = parsed.frames[index]
-          if (!this.isCurrent(generation) || jpegBytes.byteLength > MAX_FRAME_BYTES) continue
+      try {
+        while (this.isCurrent(generation)) {
+          const read = await reader.read()
+          if (read.done) break
+          const chunk = read.value
+          if (!chunk || chunk.size === 0) continue
+          const parsed = extractLatestJpegData(appendMjpegData(remainder, chunk, MAX_PENDING_BYTES), MAX_FRAME_BYTES)
+          remainder = parsed.remainder
+          const frame = parsed.latestFrame
+          if (!frame || !this.isCurrent(generation)) continue
           const now = Date.now()
-          if (now - lastRenderAt < MIN_RENDER_INTERVAL_MS) break
-          const data = Data.fromUint8Array(jpegBytes)
-          const image = data ? UIImage.fromData(data) : null
+          if (now - lastRenderAt < MIN_RENDER_INTERVAL_MS) continue
+          const image = UIImage.fromData(frame)
           if (!image) continue
           framesDecoded += 1
           lastRenderAt = now
           callbacks.onFrame(image, framesDecoded)
-          break
         }
+      } finally {
+        reader.releaseLock()
       }
       if (this.isCurrent(generation)) callbacks.onStopped("ended")
     } catch (error) {

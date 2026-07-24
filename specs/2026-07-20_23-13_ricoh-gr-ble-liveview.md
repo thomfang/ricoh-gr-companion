@@ -28,7 +28,7 @@
 - 真机：**RICOH GR IIIx，固件 1.21**。
 - BLE：已发现 7 服务/57 特征；已验证 Operation Mode：`0x02`=BLE_STARTUP、`0x00`=Capture。只读 Profile/自动重连已可用；未写任何 GATT 特征。
 - 手动 WLAN：iPhone 加入相机热点后，`GET http://192.168.0.1/v1/props` 返回 HTTP 200 / JSON（5144 bytes）。
-- LiveView：`GET /v1/liveview` 返回 HTTP 200、`multipart/x-mixed-replace; boundary=--boundary`；`Response.body` 可流式读到 JPEG `FF D8`，`reader.cancel()` 可释放连接。
+- LiveView：`GET /v1/liveview` 返回 HTTP 200、`multipart/x-mixed-replace; boundary=--boundary`；早期真机证据使用 `Response.body` 流式读到 JPEG `FF D8`，`reader.cancel()` 可释放连接。2026-07-24 实现已改为 Scripting 原生零拷贝 `Response.dataStream`，待真机复测。
 - 预览：真机显示连续画面，手动停止时累计解码 31 帧。实现采用 JPEG SOI `FF D8` / EOI `FF D9` 增量分帧、`UIImage.fromData`、单连接、帧率与内存限制。
 - 照片协议参考（待真机确认）：公开 GR III/IIIx OpenAPI/Android 实现列出 `GET /v1/photos?storage&limit&after`、`GET /v1/photos/{folder}/{file}?storage&size`、`GET /v1/photos/{folder}/{file}/info` 和 `GET /v1/transfers`。
 - Scripting：已确认 HTTP `fetch`、`Response.data()` / body 流、`Data`、`UIImage` 可用；iOS Photos 保存能力可调用，但尚未在本项目和 GR 下载内容上真机验证。
@@ -95,7 +95,7 @@
 - 2026-07-23: GR IIIx 1.21 已完成手动 WLAN 下 HTTP/MJPEG 脚本内预览真机验证。
 - 2026-07-24: 修正 Safe Area 策略：仅 `ZStack` 内的背景 `Rectangle` 使用 `ignoresSafeArea`，`ScrollView` 内容层和导航栏保持系统安全区。主题继续使用 iOS 语义动态颜色，版本固定为 `1.0.0`。
 - 2026-07-24: 获批完成无需相机的测试准备。修复空 `files` 列表解析、取消后错误触发兼容回退、诊断结构误判、Files 目录选择取消残留、传输批次异常卡在 running、保存前取消、临时文件清理异常、照片详情旧请求污染，以及 LiveView 停止超时后可能开放第二连接的问题。
-- 2026-07-24: 扩充离线回归，覆盖 GR III/IIIx/IV 与 unknown 识别、两类照片列表、空图库、非法结构、MJPEG marker 跨 chunk、多帧与不完整帧；新增 `specs/2026-07-24_09-51_device-test-checklist.md`。
+- 2026-07-24: LiveView 数据链路从 `Response.body<Uint8Array>` 改为原生零拷贝 `Response.dataStream<Data>`；pending 与最新 JPEG 保持 Data，移除 `Data.fromUint8Array`，只解码每批次最新完整帧，并将渲染上限从约 5 FPS 提升到约 30 FPS。静态、离线与 UI smoke 已通过，实际帧率待 GR IIIx 真机复测。
 
 ## Validation
 - Static checks: 根入口和全部模块已执行 `get_typescript_diagnostics`；离线测试覆盖 URL 编码、GR IIIx/IV 型号识别、选择状态与 MJPEG 跨 chunk 分帧。

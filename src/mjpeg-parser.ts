@@ -3,6 +3,11 @@ export type MjpegParseResult = {
   remainder: Uint8Array
 }
 
+export type DataMjpegParseResult = {
+  latestFrame: Data | null
+  remainder: Data | null
+}
+
 const MARKER = 0xff
 const SOI = 0xd8
 const EOI = 0xd9
@@ -32,8 +37,42 @@ export function extractJpegFrames(buffer: Uint8Array): MjpegParseResult {
   }
 }
 
+export function appendMjpegData(remainder: Data | null, chunk: Data, maxBytes: number): Data {
+  if (!remainder || remainder.size === 0) return chunk.size <= maxBytes ? chunk : chunk.slice(chunk.size - maxBytes)
+  const allowedRemainderBytes = Math.max(0, maxBytes - Math.min(chunk.size, maxBytes))
+  const boundedRemainder = remainder.size > allowedRemainderBytes ? remainder.slice(remainder.size - allowedRemainderBytes) : remainder
+  const boundedChunk = chunk.size > maxBytes ? chunk.slice(chunk.size - maxBytes) : chunk
+  return boundedRemainder.size === 0 ? boundedChunk : Data.combine([boundedRemainder, boundedChunk])
+}
+
+/** Extracts only the newest complete JPEG as native Data and preserves an incomplete tail. */
+export function extractLatestJpegData(buffer: Data, maxFrameBytes: number): DataMjpegParseResult {
+  const bytes = buffer.toUint8Array()
+  if (!bytes || bytes.length === 0) return { latestFrame: null, remainder: null }
+  let latestStart = -1
+  let latestEnd = -1
+  let searchFrom = 0
+  const latestFrame = () => latestStart >= 0 ? buffer.slice(latestStart, latestEnd) : null
+
+  while (true) {
+    const start = indexOfMarker(bytes, searchFrom, SOI)
+    if (start < 0) {
+      const trailingMarker = bytes[bytes.length - 1] === MARKER
+      return { latestFrame: latestFrame(), remainder: trailingMarker ? buffer.slice(buffer.size - 1) : null }
+    }
+    const end = indexOfMarker(bytes, start + 2, EOI)
+    if (end < 0) return { latestFrame: latestFrame(), remainder: buffer.slice(start) }
+    const frameEnd = end + 2
+    if (frameEnd - start <= maxFrameBytes) {
+      latestStart = start
+      latestEnd = frameEnd
+    }
+    searchFrom = frameEnd
+  }
+}
+
+
 export function appendMjpegChunk(remainder: Uint8Array, chunk: Uint8Array): Uint8Array {
-  if (remainder.byteLength === 0) return chunk
   const combined = new Uint8Array(remainder.byteLength + chunk.byteLength)
   combined.set(remainder)
   combined.set(chunk, remainder.byteLength)
